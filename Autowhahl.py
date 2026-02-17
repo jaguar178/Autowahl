@@ -11,10 +11,18 @@ st.set_page_config(page_title="Auto-Finder", layout="wide")
 # -----------------------------
 @st.cache_data
 def load_data():
-    df = pd.read_csv("vehicles.csv")
-    return df
+    try:
+        df = pd.read_csv("vehicles.csv")
+        return df
+    except Exception as e:
+        st.error(f"Fehler beim Laden der Datei: {e}")
+        return pd.DataFrame()
 
 df = load_data()
+
+if df.empty:
+    st.error("❌ Keine Fahrzeugdaten vorhanden.")
+    st.stop()
 
 # -----------------------------
 # Titel
@@ -23,7 +31,7 @@ st.title("🚗 Intelligenter Auto-Finder")
 st.write("Finde das perfekt zu dir passende Fahrzeug.")
 
 # -----------------------------
-# User-Eingaben
+# Sidebar
 # -----------------------------
 st.sidebar.header("Deine Anforderungen")
 
@@ -31,37 +39,43 @@ budget = st.sidebar.slider("Budget (€)", 10000, 80000, 30000, step=1000)
 personen = st.sidebar.slider("Anzahl Personen", 1, 7, 4)
 fahrprofil = st.sidebar.selectbox("Fahrprofil", ["Stadt", "Langstrecke", "Gemischt"])
 umwelt = st.sidebar.selectbox("Umweltbewusstsein", ["Gering", "Mittel", "Hoch"])
+
+if "Fahrzeugtyp" not in df.columns:
+    st.error("Spalte 'Fahrzeugtyp' fehlt in der CSV.")
+    st.stop()
+
 fahrzeugtyp = st.sidebar.selectbox(
     "Fahrzeugtyp",
-    df["Fahrzeugtyp"].unique()
+    sorted(df["Fahrzeugtyp"].dropna().unique())
 )
+
 zustand = st.sidebar.selectbox("Neu oder Gebraucht?", ["Neu", "Gebraucht"])
 
 # -----------------------------
-# Gewichtungssystem
+# Score-Funktion
 # -----------------------------
 def calculate_score(row):
     score = 0
 
-    # 1. Budget (stark gewichtet)
+    # Budget
     if row["Preis"] <= budget:
         score += 40
     else:
         score -= 20
 
-    # 2. Fahrzeugtyp (stark gewichtet)
+    # Fahrzeugtyp
     if row["Fahrzeugtyp"] == fahrzeugtyp:
         score += 30
 
-    # 3. Sitzplätze
+    # Sitzplätze
     if row["Sitzplaetze"] >= personen:
         score += 10
 
-    # 4. Zustand
+    # Zustand
     if row["Zustand"] == zustand:
         score += 10
 
-    # 5. Fahrprofil
+    # Fahrprofil
     if fahrprofil == "Stadt":
         if row["Antriebsart"] == "Elektro":
             score += 10
@@ -71,13 +85,13 @@ def calculate_score(row):
     elif fahrprofil == "Langstrecke":
         if row["Reichweite"] > 700:
             score += 10
-        if row["Antriebsart"] in ["Diesel"]:
+        if row["Antriebsart"] == "Diesel":
             score += 5
 
     elif fahrprofil == "Gemischt":
         score += 5
 
-    # 6. Umweltbewusstsein
+    # Umwelt
     if umwelt == "Hoch":
         if row["Antriebsart"] == "Elektro":
             score += 15
@@ -90,11 +104,18 @@ def calculate_score(row):
 
     return score
 
+# -----------------------------
 # Score berechnen
+# -----------------------------
 df["Score"] = df.apply(calculate_score, axis=1)
 
-# Bestes Fahrzeug ermitteln
-best_car = df.sort_values(by="Score", ascending=False).iloc[0]
+df_sorted = df.sort_values(by="Score", ascending=False).reset_index(drop=True)
+
+if df_sorted.empty:
+    st.warning("⚠️ Kein passendes Fahrzeug gefunden.")
+    st.stop()
+
+best_car = df_sorted.loc[0]
 
 # -----------------------------
 # Ergebnisanzeige
@@ -104,7 +125,10 @@ st.subheader("🏆 Unsere Empfehlung für dich:")
 col1, col2 = st.columns([1, 2])
 
 with col1:
-    st.image(best_car["Bild_URL"], use_container_width=True)
+    if "Bild_URL" in best_car and pd.notna(best_car["Bild_URL"]):
+        st.image(best_car["Bild_URL"], use_container_width=True)
+    else:
+        st.info("Kein Bild verfügbar")
 
 with col2:
     st.markdown(f"## {best_car['Marke']} {best_car['Modell']}")
@@ -118,27 +142,27 @@ with col2:
     st.write(f"**Zustand:** {best_car['Zustand']}")
 
 # -----------------------------
-# Begründung generieren
+# Begründung
 # -----------------------------
 def generate_reason(car):
     reasons = []
 
     if car["Preis"] <= budget:
-        reasons.append("liegt innerhalb deines Budgets")
+        reasons.append("innerhalb deines Budgets liegt")
 
     if car["Fahrzeugtyp"] == fahrzeugtyp:
-        reasons.append("entspricht deinem gewünschten Fahrzeugtyp")
+        reasons.append("deinem gewünschten Fahrzeugtyp entspricht")
 
     if car["Sitzplaetze"] >= personen:
-        reasons.append("bietet ausreichend Sitzplätze")
+        reasons.append("ausreichend Sitzplätze bietet")
 
     if umwelt == "Hoch" and car["Antriebsart"] == "Elektro":
-        reasons.append("ist besonders umweltfreundlich (Elektroantrieb)")
+        reasons.append("besonders umweltfreundlich ist")
 
     if fahrprofil == "Langstrecke" and car["Reichweite"] > 700:
-        reasons.append("eignet sich hervorragend für Langstrecken")
+        reasons.append("sich hervorragend für Langstrecken eignet")
 
-    return ", ".join(reasons)
+    return ", ".join(reasons) if reasons else "gut zu deinen Kriterien passt"
 
 st.markdown("### 💡 Warum dieses Fahrzeug?")
 st.write(f"Dieses Fahrzeug wurde ausgewählt, weil es {generate_reason(best_car)}.")
@@ -147,4 +171,5 @@ st.write(f"Dieses Fahrzeug wurde ausgewählt, weil es {generate_reason(best_car)
 # Transparenz
 # -----------------------------
 with st.expander("🔎 Transparenz: Bewertungssystem anzeigen"):
-    st.dataframe(df[["Marke", "Modell", "Score"]].sort_values(by="Score", ascending=False))
+    st.dataframe(df_sorted[["Marke", "Modell", "Score"]])
+
